@@ -1,0 +1,118 @@
+---
+title: "Project 1"
+author: "Saayed Alam"
+date: "5/31/2019"
+output: html_document
+---
+
+***
+
+In this first assignment, I’ll attempt to predict ratings with very little information. I’ll first look at just raw averages across all (training dataset) users. I’ll then account for “bias” by normalizing across users and across items.  
+
+Since I am predicting ratings with very little information, I will make my own toy dataset using random sample function from r base. This toy dataset is a collection of ratings of audiobooks by some users. This system will recommend audiobooks to listeners based on their past ratings. 
+```{r library, warning=FALSE, message=FALSE}
+# load libraries
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+```
+
+I use the `sample` function to create 36 ratings for 6 audiobooks by 6 users into a matrix. Then, I break the ratings into separate training and test datasets and I create random user names and audiobook names and print the user-item matrix.  Where each rating may be assigned to a training dataset, assigned to a test dataset, or missing. 
+```{r data,}
+# random sample of 36 ratings
+set.seed(12)
+df <- matrix(sample(1:5, 36, replace = TRUE), nrow = 6)
+
+# sample dataset for splitting
+split_df <- sample(1:length(df), 6, replace = FALSE)
+
+# split the data into training dataset
+train <- df
+train[split_df] <- NA
+
+# split the data into training dataset
+test <- df
+test[-split_df] <- NA
+
+# create some missing values for both dataset
+set.seed(5)
+missing_df <- sample(1:length(df), 6, replace = FALSE)
+df[missing_df] <- NA
+train[missing_df] <- NA
+test[missing_df] <- NA
+
+# name of the books
+users <- c("Saayed Alam", "Bill Gates", "Humera Ferdous", "Kevin Rose", "Cody Rodes", "Jon Moxley")
+rownames(df) <- users
+rownames(train) <- users
+rownames(test) <- users
+
+# name of the users
+audiobook <- c("Caesar's Last Breath", "Why Buddhism is True", "The Power of Now", "Leonardo da Vinci", "Factfulness", "The Order of Time")
+colnames(df) <- audiobook
+colnames(train) <- audiobook
+colnames(test) <- audiobook
+
+# print the matrix
+df %>% kable(caption = "Audiobook Ratings") %>% kable_styling("striped", full_width = TRUE)
+train %>% kable(caption = "Training Dataset") %>% kable_styling("striped", full_width = TRUE)
+test %>% kable(caption = "Test Dataset") %>% kable_styling("striped", full_width = TRUE)
+```
+
+
+Then using the training dataset, I calculate the raw average (mean) rating for every user-item combination and calculate the RMSE for raw average for both your training data and your test data.
+```{r mean and rmse, }
+# raw average
+raw_ave <- round(mean(train, na.rm = TRUE), 2)
+
+# user-item matrix for raw avearge
+user_item <- matrix(replicate(36, raw_ave), 6)
+rownames(user_item) <- rownames(train)
+colnames(user_item) <- colnames(train)
+user_item %>% kable(caption = "User-Item Matrix") %>% kable_styling("striped", full_width = TRUE)
+
+# function to calculate RMSE
+rmse <- function(o, p) {
+  round((sqrt(mean((o - p)^2, na.rm = TRUE))), 2)
+}
+
+# rmse for train dataset
+rmse1 <- rmse(train, raw_ave)
+
+# rmse for test dataset
+rmse2 <- rmse(test, raw_ave)
+```
+
+Further, I calculate the bias for each user and each item using your training data. Then from the raw average, and the appropriate user and item biases, I calculate the baseline predictors for every user-item combination.
+```{r bias and baseline, warning=FALSE}
+# bias for each user
+user_bias <- round((rowMeans(train, na.rm = TRUE) - raw_ave), 2)
+user_bias %>% kable(col.names = "User Bias") %>% kable_styling("striped", full_width = TRUE)
+
+# bias for each item
+item_bias <- round((colMeans(train, na.rm = TRUE) - raw_ave), 2)
+item_bias %>% kable(col.names = "Item Bias") %>% kable_styling("striped", full_width = TRUE)
+
+# calculate every user-item biases combination
+a <- apply(expand.grid((as_tibble(user_bias))[[1]], (as_tibble(item_bias))[[1]]), 1, sum)
+
+# baseline predictors for every user-item combination
+baseline <- (replicate(36, raw_ave) + a)
+baseline <- matrix(baseline, 6)
+rownames(baseline) <- rownames(train)
+colnames(baseline) <- colnames(train)
+baseline %>% kable(caption = "Baeline Predictor") %>% kable_styling("striped", full_width = TRUE)
+```
+ 
+Finally, I calculate the RMSE for the baseline predictors for both your training data and your test data and summarize the results in a table below.
+```{r all rmse}
+# rmse for baseline predictors
+rmse3 <- rmse(test, baseline)
+rmse4 <- rmse(train, baseline)
+
+# summary of the result
+kable(cbind(rmse1, rmse2, rmse3, rmse4), col.names = rep(c("Train", "Test"), 2)) %>% 
+  kable_styling("striped", full_width = F) %>% 
+  add_header_above(c("Raw Average" = 2, "Baseline Predictor" = 2))
+```
+
