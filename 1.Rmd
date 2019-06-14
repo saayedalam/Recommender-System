@@ -1,118 +1,14 @@
 ---
-title: "Project 1"
+title: "Research Discussion Assignment 1"
 author: "Saayed Alam"
-date: "5/31/2019"
+date: "6/14/2019"
 output: html_document
 ---
 
-***
+**Choose one commercial recommender and describe how you think it works (content-based, collaborative filtering, etc). Does the technique deliver a good experience or are the recommendations off-target?**
 
-In this first assignment, I’ll attempt to predict ratings with very little information. I’ll first look at just raw averages across all (training dataset) users. I’ll then account for “bias” by normalizing across users and across items.  
+*Pandora is one of most popular music streaming services. The service delivers customized stations that are automatically generated playlists based on feedback from users. The company has grown to 78 million users who listen for an average of 24 hours per month. Pandora recently updated their recommendation engine by experimenting with over 70 different algorithms on a particular station with 30 million active listeners, and a sophisticated testing strategy. A team of musicologists annotates songs based on genre, rhythm, and progression. Then the data is mutated into a vector for comparing song similarity. Using this technique helps promote unknown artists that might be a good fit to a particular user. The data is then continuously improved by user feedback. Another layer to their recommendation is system is balancing new with familiar. Often users taste change over time. Pandora recommends different music genre on certain interval which elevates their system compared to their competitor. Finally, they test their engine offline based on 11 months of historical user data and then the new recommender is validated based on feedback from 1 month of actual user interactions. Personally, I have not used Pandora's service but reading from various respected blogs, pandora has the best in class recommendation engine. [Source](https://www.theserverside.com/feature/How-Pandora-built-a-better-recommendation-engine)*
 
-Since I am predicting ratings with very little information, I will make my own toy dataset using random sample function from r base. This toy dataset is a collection of ratings of audiobooks by some users. This system will recommend audiobooks to listeners based on their past ratings. 
-```{r library, warning=FALSE, message=FALSE}
-# load libraries
-library(tidyverse)
-library(kableExtra)
-library(knitr)
-```
+**Read the article below and consider how to handle attacks on recommender systems. Can you think of a similar example where a collective effort to alter the workings of content recommendations have been successful? How would you design a system to prevent this kind of abuse? Travis M. Andrews, The Washington Post (2017): Wisdom of the crowd? IMDb users gang up on Christian Bale’s new movie before it even opens.**
 
-I use the `sample` function to create 36 ratings for 6 audiobooks by 6 users into a matrix. Then, I break the ratings into separate training and test datasets and I create random user names and audiobook names and print the user-item matrix.  Where each rating may be assigned to a training dataset, assigned to a test dataset, or missing. 
-```{r data,}
-# random sample of 36 ratings
-set.seed(12)
-df <- matrix(sample(1:5, 36, replace = TRUE), nrow = 6)
-
-# sample dataset for splitting
-split_df <- sample(1:length(df), 6, replace = FALSE)
-
-# split the data into training dataset
-train <- df
-train[split_df] <- NA
-
-# split the data into training dataset
-test <- df
-test[-split_df] <- NA
-
-# create some missing values for both dataset
-set.seed(5)
-missing_df <- sample(1:length(df), 6, replace = FALSE)
-df[missing_df] <- NA
-train[missing_df] <- NA
-test[missing_df] <- NA
-
-# name of the books
-users <- c("Saayed Alam", "Bill Gates", "Humera Ferdous", "Kevin Rose", "Cody Rodes", "Jon Moxley")
-rownames(df) <- users
-rownames(train) <- users
-rownames(test) <- users
-
-# name of the users
-audiobook <- c("Caesar's Last Breath", "Why Buddhism is True", "The Power of Now", "Leonardo da Vinci", "Factfulness", "The Order of Time")
-colnames(df) <- audiobook
-colnames(train) <- audiobook
-colnames(test) <- audiobook
-
-# print the matrix
-df %>% kable(caption = "Audiobook Ratings") %>% kable_styling("striped", full_width = TRUE)
-train %>% kable(caption = "Training Dataset") %>% kable_styling("striped", full_width = TRUE)
-test %>% kable(caption = "Test Dataset") %>% kable_styling("striped", full_width = TRUE)
-```
-
-
-Then using the training dataset, I calculate the raw average (mean) rating for every user-item combination and calculate the RMSE for raw average for both your training data and your test data.
-```{r mean and rmse, }
-# raw average
-raw_ave <- round(mean(train, na.rm = TRUE), 2)
-
-# user-item matrix for raw avearge
-user_item <- matrix(replicate(36, raw_ave), 6)
-rownames(user_item) <- rownames(train)
-colnames(user_item) <- colnames(train)
-user_item %>% kable(caption = "User-Item Matrix") %>% kable_styling("striped", full_width = TRUE)
-
-# function to calculate RMSE
-rmse <- function(o, p) {
-  round((sqrt(mean((o - p)^2, na.rm = TRUE))), 2)
-}
-
-# rmse for train dataset
-rmse1 <- rmse(train, raw_ave)
-
-# rmse for test dataset
-rmse2 <- rmse(test, raw_ave)
-```
-
-Further, I calculate the bias for each user and each item using your training data. Then from the raw average, and the appropriate user and item biases, I calculate the baseline predictors for every user-item combination.
-```{r bias and baseline, warning=FALSE}
-# bias for each user
-user_bias <- round((rowMeans(train, na.rm = TRUE) - raw_ave), 2)
-user_bias %>% kable(col.names = "User Bias") %>% kable_styling("striped", full_width = TRUE)
-
-# bias for each item
-item_bias <- round((colMeans(train, na.rm = TRUE) - raw_ave), 2)
-item_bias %>% kable(col.names = "Item Bias") %>% kable_styling("striped", full_width = TRUE)
-
-# calculate every user-item biases combination
-a <- apply(expand.grid((as_tibble(user_bias))[[1]], (as_tibble(item_bias))[[1]]), 1, sum)
-
-# baseline predictors for every user-item combination
-baseline <- (replicate(36, raw_ave) + a)
-baseline <- matrix(baseline, 6)
-rownames(baseline) <- rownames(train)
-colnames(baseline) <- colnames(train)
-baseline %>% kable(caption = "Baeline Predictor") %>% kable_styling("striped", full_width = TRUE)
-```
- 
-Finally, I calculate the RMSE for the baseline predictors for both your training data and your test data and summarize the results in a table below.
-```{r all rmse}
-# rmse for baseline predictors
-rmse3 <- rmse(test, baseline)
-rmse4 <- rmse(train, baseline)
-
-# summary of the result
-kable(cbind(rmse1, rmse2, rmse3, rmse4), col.names = rep(c("Train", "Test"), 2)) %>% 
-  kable_styling("striped", full_width = F) %>% 
-  add_header_above(c("Raw Average" = 2, "Baseline Predictor" = 2))
-```
-
+*The Dark Knight is one of the most acclaimed and commercially successful movie of all time. Upon its release, it quickly rose to the top of coveted IMDB's Top 250 movie list. Movie aficionados did not like the notion of a comic book movie having such stature. They retaliated by downvoting the rating and briefly made the movie one of the worst rated movie of all time. As it was mentioned in the article, often such actions are by users who have not watched the movie and victims of bandwagon fallacy. One way to design the system to prevent this kind of abuse is to verify whether reviewers have watched the movie or not. Matter of fact, such feature has been introduced by [Rottentomatotoes](https://editorial.rottentomatoes.com/article/introducing-verified-audience-score/) few days ago. They use API from top movie ticket vendors such as fandango and verify whether the respective user bought the ticket. This is one way to prevent recommender system manipulation.*
