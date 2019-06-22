@@ -1,0 +1,138 @@
+---
+title: "DATA 643 Project 3 | Matrix Factorization Methods"
+author: "Saayed Alam"
+date: "6/21/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+***
+
+```{r include=FALSE}
+# knitr settings
+knitr::opts_chunk$set(warning = F, 
+                      message = F,
+                      #echo = F,
+                      fig.align = "center")
+```
+
+The goal of this assignment is to implement a matrix factorization method such as singular value decomposition (SVD) in the context of a recommender system. I will work with an existing recommender system written by myself for [previous assignment](https://github.com/saayedalam/Recommender-System/blob/master/2.Rmd).  
+```{r library, warning=FALSE, message=FALSE}
+# load libraries
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(recommenderlab)
+```
+
+### Dataset
+I will use the MovieLense ratings data set. The data was collected through the MovieLens web [site](movielens.umn.edu) during the seven-month period from September 19th, 1997 through April 22nd, 1998. The data set contains about 100,000 ratings (1-5) from 943 users on 1664 movies. 
+```{r data,}
+# ratings of first five users and five movies
+data("MovieLense")
+data.frame(as(MovieLense, "matrix")[1:5, 1:5]) %>% 
+  kable(col.names = colnames(MovieLense)[1:5]) %>% 
+  kable_styling(full_width = T)
+```
+
+### Data Exploration 
+In this section, I will explore the dataset by visualizing it through graphs. I look at the distribution of the ratings. We see the ratings of 4 has the highest count. I also plot the heat map of the rating matrix.
+```{r exploration}
+# distribution of ratings
+MovieLense@data %>% 
+  as.vector() %>% 
+  as_tibble() %>% 
+  filter_all(any_vars(. != 0)) %>% 
+  ggplot(aes(value)) + 
+  geom_bar() +
+  labs(title = "Distribution of the ratings", y = "", x = "Ratings") +
+  theme_minimal()
+
+# heatmap of the rating matrix
+image(MovieLense@data, main = "Heat map of the rating matrix")
+```
+
+### Data Preparation
+In this section I will prepare data for most accurate model. First, I will also normalize the data because having users who give high (or low) ratings to all their movies might bias the results. I can remove this effect by normalizing the data in such a way that the average rating of each user is 0. Next, I impute the missing values of each column using the mean of the respective column. Finally, I select the most relevant data about movies that have been viewed only a number of times because otherwise their ratings might be biased because of lack of data. Also users who rated only a few movies, their ratings might be biased as well.   
+```{r preparation,}
+# normalize the data
+ratings_movies <- normalize(MovieLense)
+rcm <- colMeans(ratings_movies)
+ratings_movies <- as(ratings_movies, "matrix")
+
+# imputing missing values
+ratings_movies[is.na(ratings_movies)] <- rcm
+ratings_movies <-  as(ratings_movies, "realRatingMatrix")
+
+# selecting the most relevant data
+ratings_movies <- ratings_movies[rowCounts(ratings_movies) > 50, 
+                                 colCounts(ratings_movies) > 100]
+```
+
+#### Feature Engineering
+A matrix factorization involves describing a given matrix using its constituent elements. Perhaps the most known and widely used matrix decomposition method is the Singular-Value Decomposition, or SVD. A popular application of SVD is for dimensionality reduction. Data with a large number of features, such as more features (columns) than observations (rows) may be reduced to a smaller subset of features that are most relevant to the prediction problem.
+```{r fe1, }
+# compute SVD of the rating matrix 
+ratings_svd <- as(ratings_movies, "matrix")
+ratings_svd <- svd(ratings_svd)
+```
+
+The singular value decomposition of a rating matrix is the factorization of the matrix into the product of three matrices $A = U\Sigma V^T$, where:   
+  - A is an $m × n$ matrix (rating matrix)  
+  - U is an $m × n$ orthogonal matrix (users-concepts similarity matrix)  
+  - $\Sigma$  is an $n × n$ diagonal matrix (items-concepts similarity matrix)  
+  - V is an $n × n$ orthogonal matrix (strength of each concepts)  
+```{r fe2, }
+# get U, V, Sigma
+u <- ratings_svd$u
+v <- ratings_svd$v
+sigma <- ratings_svd$d
+```
+
+We can think of `U` as columns of concepts or genres, and rows as users. Each cell tells us how strongly or weakly the user corresponds to that concept. 
+```{r fe3, }
+# inspect U
+u[1:5, 1:5] %>% 
+  kable(col.names = c("Concept 1", "Concept 2", "Concept 3", "Concept 4", "Concept 5")) %>%
+  kable_styling(full_width = F)
+```
+
+We can think of `V` as columns of concepts or genres, and rows as items, Each cell tells us how strongly or weakly the item corresponds to that concept. 
+```{r fe4, }
+# inspect v
+v[1:5, 1:5] %>% 
+  kable(col.names = c("Concept 1", "Concept 2", "Concept 3", "Concept 4", "Concept 5")) %>%
+  kable_styling(full_width = F)
+```
+
+A limitation of SVD is that features may not map neatly to items. I think we can improve the mapping by sorting the items by group (genre) as seen in the [video](https://www.youtube.com/watch?v=P5mlg91as1c&list=PLLssT5z_DsK9JDLcT8T62VtzwyW9LNepV&index=47).
+
+We can think of $\Sigma$ as strength of concepts. The value is in descending order and every number tells us how strong the concepts are. Based on this value, we can reduce the dimension of our dataset. 
+```{r fe5, }
+# inspect sigma
+head(sigma, 5) %>% kable(col.names = "Strength of Sigma") %>% kable_styling(full_width = F)
+
+# visualize the sigma
+plot(sigma)
+```
+
+The best way to reduce the dimensionality of the three matrices is to set the smallest of the singular values to zero. If we set the $s$ smallest singular values to 0, then we can also eliminate the corresponding $s$ columns of U and V. A useful rule of thumb is to retain enough singular values to make up 90% of the energy in $\Sigma$. That is, the sum of the squares of the retained singular values should be at least 90% of the sum of the squares of all the singular values. As we can see below, setting 300 smallest singular values to 0 still retains 94.7% of the energy in $\Sigma$.
+```{r}
+# reduce dimension
+a <- sum(sigma ^ 2)
+b <- sum((sigma[1:(length(sigma) - 300)])^2)
+print(paste0("The energy in sigma after dimension reduction is ", round((b/a)*100, 2), "%"))
+```
+
+Finally, we use the RMSE equation to calculate the difference between the new matrix and the original matrix. 
+```{r}
+# reduced matrix
+u1 <- as.matrix(u[, 1:643])
+d1 <- as.matrix(diag(sigma)[1:643, 1:643])
+v1 <- as.matrix(v[, 1:643])
+ratings_reduced <- u1 %*% d1 %*% t(v1)
+
+# rmse of the matrices
+sqrt(mean((ratings_reduced - as(ratings_movies, "matrix"))^2, na.rm = T))
+```
