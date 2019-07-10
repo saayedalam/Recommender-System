@@ -1,0 +1,128 @@
+---
+title: "DATA 612 Project 5 | Implementing a Recommender System on Spark"
+author: "Saayed Alam"
+date: "7/08/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+***
+
+```{r include=FALSE}
+# knitr settings
+knitr::opts_chunk$set(warning = F, 
+                      message = F,
+                      #echo = F,
+                      fig.align = "center")
+```
+
+### Introduction
+The goal of this assignment is to adapt one of your recommendation systems to work with Apache Spark and compare the performance with your previous iteration. I will adapt my MovieLense recommendation systems from [project 2](https://rpubs.com/saayedalam/data612project2) and compare it the model built on Apache Spark.
+```{r library, warning=FALSE, message=FALSE}
+# load libraries
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(recommenderlab)
+library(sparklyr)
+```
+
+### Dataset
+I will use the MovieLense dataset; the 100k MovieLense ratings data set. The data was collected through the MovieLens web site (movielens.umn.edu) during the seven-month period from September 19th, 1997 through April 22nd, 1998. The data set contains about 100,000 ratings (1-5) from 943 users on 1664 movies. 
+```{r data,}
+# load dataset
+data("MovieLense")
+```
+
+
+### Centralized Recommender System 
+For project 2, I worked with MovieLense dataset to build item-based collaborative filter and user-based collaborative filter models. However, `sparklyr` library does not offer such algorithms. Therefore, for comparison, we will implement ALS method for both recommender systems. 
+
+I will use the k-fold method to split the data. Then fit the ALS model and make prediction. Lastly, I will extract accuracy of the model to compare with the model built on Spark. 
+```{r centralized,}
+# start 
+a1 <- Sys.time()
+
+# split dataset using k-fold method
+set.seed(156)
+scheme <- MovieLense %>% 
+  evaluationScheme(method = "cross", k = 5, given = 15, goodRating = 3)
+
+# fit the model
+als_model <- Recommender(getData(scheme, "train"), method = "ALS")
+
+# make prediction
+prediction <- predict(als_model, getData(scheme, "known"), type = "ratings")
+
+# end 
+z1 <- Sys.time()
+
+# get accuracy score
+evaluation <- calcPredictionAccuracy(prediction, getData(scheme, "unknown"))
+```
+
+### Distributed Recommender System
+In this section I will adapt the model above to work with Apache Spark. Apache Spark is open source, general-purpose distributed computing engine used for processing and analyzing a large amount of data.
+
+I will create a connection to spark and then copy the dataset to spark. Sparklyr package accepts only data frame and numeric variables so I make the changes. Next, I split the dataset within the local platform and fit the model. Lastly I make prediction and copy the result to R. 
+```{r}
+# convert data based on sparklyr requirements
+sdf_MovieLense <- MovieLense %>% 
+  as(. , "data.frame") %>% 
+  mutate(user = as.numeric(user),
+         item = as.numeric(item)) 
+
+# connect to spark locally
+sc <- spark_connect(master = "local")
+
+# start 
+a2 <- Sys.time()
+
+# copy data to spark
+sdf_rating_matrix <- sdf_copy_to(sc, sdf_MovieLense, "sdf_rating_matrix", overwrite = TRUE)
+
+# split dataset in spark
+partitioned <- sdf_rating_matrix %>% 
+  sdf_random_split(training = 0.8, testing = 0.2)
+
+# fit the model
+sdf_als_model <- ml_als(partitioned$training, max_iter = 5)
+
+# make prediction
+prediction <- ml_transform(sdf_als_model, partitioned$testing) %>% collect()
+
+# end 
+z2 <- Sys.time()
+
+# disconnect from spark
+spark_disconnect(sc)
+```
+
+### Performance Evaluation
+To evaluate the performances of the models, I will compare the RMSE of the models and the time it took from data preparation to data prediction. 
+```{r rmse}
+# function to calculate RMSE
+rmse <- function(o, p) {
+  round((sqrt(mean((o - p)^2, na.rm = TRUE))), 2)
+}
+
+# rmse for both models
+rmse1 <-  evaluation[[1]]
+rmse2 <- rmse(prediction$rating, prediction$prediction)
+
+# print the score
+kable(cbind(rmse1, rmse2), col.names = c("recommenderlab", "sparklyr")) %>% 
+  kable_styling("striped", full_width = F) %>% 
+  add_header_above(c("RMSE" = 2))
+
+# print the score
+kable(cbind((z1 - a1), (z2 - a2)), col.names = c("recommenderlab", "sparklyr")) %>% 
+  kable_styling("striped", full_width = F) %>% 
+  add_header_above(c("Processing Time" = 2))  
+```
+
+### Conclusion
+For this assignment, I used a dataset of 10 thousand ratings and built two recommender systems. One on my personal computer and the other on distributed general-purpose cluster-computing framework. Even though I used the same dataset, I have an improved RMSE score for the model built on Spark. I assume it is due to the number of maximum iteration the model ran. (P.S. I could not run the default of 10 iteration, I got an error and could not find a solution.) I also compared the time it took for the model to fit and make prediction. As expected Spark did the calculation in less than half. 
+
+In conclusion, with this particular dataset, it is best to move to a distributed platform before making prediction because that is the only time my computer froze for several seconds. 
