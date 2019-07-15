@@ -1,0 +1,125 @@
+---
+title: "DATA 612 FINAL PROJECT | GoodReads Recommender System"
+author: "Saayed Alam"
+date: "7/12/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+***
+
+### Introduction
+[Goodreads](https://goodreads.com/) is the world's largest social cataloging website that allows individuals to freely search its database of books, annotations, and reviews. They also self-proclaim to be the largest book recommendations site, however as an user for over a decade, their recommendations has not been up to the industry standard. 
+
+For this project, I will use a [dataset](https://github.com/zygmuntz/goodbooks-10k) of six million ratings for ten thousand most popular books. The dataset was scraped from Goodreads by the user `zygmuntz` and graciously stored on Github. 
+```{r, warning = F, message = F}
+# load libraries
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(sparklyr)
+library(data.table)
+```
+
+### Data Exploration
+I load the dataset using `fread`. It is the fastest way to load large dataset in R. Next, I visualize the distribution of the ratings. We can tell majority of the books get good reviews. I also visualize the number of ratings per user and per book. We see very small left skewness of number of ratings per user. It tells us majority of the people rate small number of books. On the other side, the distribution of the number of ratings per book tells a different story. We see only a small number of books are rated by high number of users. However, most of the books has small number of ratings. 
+```{r, fig.width = 12, fig.height = 8}
+# load dataset
+data <- fread("https://raw.githubusercontent.com/zygmuntz/goodbooks-10k/master/ratings.csv")
+
+# preview of the dataset
+head(data)%>% 
+  kable() %>% 
+  kable_styling("striped", full_width = F)
+
+# distribution of ratings
+data %>% 
+  ggplot(aes(rating)) +
+  geom_bar() +
+  labs(title = "Distribution of the ratings", y = "", x = "Ratings") +
+  theme_minimal()
+
+# distribution of ratings per user
+data %>% 
+  group_by(user_id) %>% 
+  add_tally() %>% 
+  ggplot(aes(n)) +
+  geom_histogram(binwidth = function(x) 2 * IQR(x) / (length(x)^(1/3))) +
+  labs(title = "Distribution of the ratings per user", y = "", x = "") +
+  theme_minimal()
+
+# distribution of ratings per book
+data %>% 
+  group_by(book_id) %>% 
+  add_tally() %>% 
+  ggplot(aes(n)) +
+  geom_histogram(bins = 10) +
+  labs(title = "Distribution of the ratings per book", y = "", x = "") +
+  theme_minimal()
+```
+
+### Data Preparation
+The original dataset has `r dim(data)[1]` ratings. Even with Spark, I was unable to load the dataset without continuously crashing RStudio. Therefore, I decided to select only the relevant ratings. I have picked users who have rated at least 100 books and books with at least 400 ratings. This selection will also help with the biases in the ratings.
+```{r}                 
+# select relevant rating                 
+ratings <- data %>% 
+  group_by(user_id) %>% 
+  add_tally(name = "n1") %>% 
+  group_by(book_id) %>% 
+  add_tally(name = "n2") %>% 
+  filter(n1 >= 100 & n2 >= 400) %>% 
+  select(-c("n1", "n2")) %>% 
+  rename(user = user_id,
+         item = book_id)
+
+# shape of the dataset
+print(paste("After selecting relevant rows, dataset has", dim(ratings)[1], "ratings"))
+```
+
+### Build Model
+To build the model, I will create a connection to spark and then copy the dataset to spark. Next, I split the dataset in the spark platform and perform recommendation using Alternating Least Squares (ALS) matrix factorization. Lastly, I will copy the predicted result to R and disconnect from spark. 
+```{r}
+# connect to spark
+sc <- spark_connect(master = "local")
+
+# copy data to spark
+sdf_rating <- sdf_copy_to(sc, ratings, "sdf_rating", overwrite = TRUE)
+
+# split dataset in spark
+partitioned <- sdf_rating %>% 
+  sdf_random_split(training = 0.8, testing = 0.2)
+
+# perform recommendation 
+sdf_als_model <- ml_als(partitioned$training, max_iter = 5)
+
+# make prediction
+prediction <- ml_transform(sdf_als_model, partitioned$testing) %>% collect()
+
+# disconnect from spark
+spark_disconnect(sc)
+```
+
+### Prediction
+Lastly, I load the dataset with the title of the books and inner join it with my prediction dataset. I only print the top five recommended books for user with id number 1. 
+```{r}
+# load book names
+book_name <- read.csv("https://raw.githubusercontent.com/zygmuntz/goodbooks-10k/master/books.csv")
+
+# select only title and book id from the dataset
+book_name <- book_name %>% 
+  select(c("book_id", "title")) %>% 
+  rename(item = book_id)
+
+# top 5 recommendation for user_id 1
+prediction %>% 
+  filter(user == 1) %>% 
+  arrange(desc(prediction)) %>% 
+  top_n(5) %>% 
+  inner_join(book_name) %>% 
+  kable() %>% 
+  kable_styling("striped", full_width = T)
+```
+
+### Conclusion
+In this course, recommender system, I have learned several techniques to build a recommender system. First, I learned to work with small dataset and build collaborative filtering recommender systems. On the later half of the semester, I learned Spark to work with large datasets. For the final project, I wanted to put these two together and build a recommender system on Spark. I believe I have accomplished that. However, my intention was to recommend book for myself but the task of scrapping all my ratings from Goodreads was too arduous and beyond the scope of this project. Moreover, I wanted to implement other machine learning algorithms and evaluate the model's performance but sparklyr only offers ALS algorithm to make recommendations. Nevertheless, in the future, I would love to build on this project. I will web scrape my book ratings and implement `H2O` library to build other models and evaluate their performances. 
